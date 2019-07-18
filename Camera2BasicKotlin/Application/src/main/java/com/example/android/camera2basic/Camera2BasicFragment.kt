@@ -317,10 +317,14 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
         val manager = activity.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         try {
             for (cameraId in manager.cameraIdList) {
+                println(cameraId)
+                // 获取相机特征
                 val characteristics = manager.getCameraCharacteristics(cameraId)
 
                 // We don't use a front facing camera in this sample.
+                // 获取摄像头
                 val cameraDirection = characteristics.get(CameraCharacteristics.LENS_FACING)
+                // 不用前置摄像头
                 if (cameraDirection != null &&
                         cameraDirection == CameraCharacteristics.LENS_FACING_FRONT) {
                     continue

@@ -87,14 +87,18 @@ typealias LumaListener = (luma: Double) -> Unit
  * - Image analysis
  */
 class CameraFragment : Fragment() {
-
+    // 最外层布局
     private lateinit var container: ConstraintLayout
+    // 相机预览布局
     private lateinit var viewFinder: TextureView
+    // 文件输出目录
     private lateinit var outputDirectory: File
+    // 本地广播
     private lateinit var broadcastManager: LocalBroadcastManager
 
     private var displayId = -1
     private var lensFacing = CameraX.LensFacing.BACK
+    // 提供元数据
     private var preview: Preview? = null
     private var imageCapture: ImageCapture? = null
     private var imageAnalyzer: ImageAnalysis? = null
@@ -256,27 +260,34 @@ class CameraFragment : Fragment() {
         Log.d(TAG, "Screen metrics: ${metrics.widthPixels} x ${metrics.heightPixels}")
 
         // Set up the view finder use case to display camera preview
+        // 预览配置
         val viewFinderConfig = PreviewConfig.Builder().apply {
+            // 设置摄像头：前置还是后置
             setLensFacing(lensFacing)
             // We request aspect ratio but no resolution to let CameraX optimize our use cases
+            // 设置屏幕宽高比
             setTargetAspectRatio(screenAspectRatio)
             // Set initial target rotation, we will have to call this again if rotation changes
             // during the lifecycle of this use case
+            // 设置预览的旋转角度
             setTargetRotation(viewFinder.display.rotation)
         }.build()
 
         // Use the auto-fit preview builder to automatically handle size and orientation changes
         preview = AutoFitPreviewBuilder.build(viewFinderConfig, viewFinder)
 
-        // Set up the capture use case to allow users to take photos
+        // 配置拍照用例
         val imageCaptureConfig = ImageCaptureConfig.Builder().apply {
+            // 设置使用的摄像头 CameraX.LensFacing.BACK、CameraX.LensFacing.FRONT
             setLensFacing(lensFacing)
+            // 设置拍照为：CaptureMode.MIN_LATENCY：最小延迟；MAX_QUALITY：最大质量
             setCaptureMode(CaptureMode.MIN_LATENCY)
             // We request aspect ratio but no resolution to match preview config but letting
             // CameraX optimize for whatever specific resolution best fits requested capture mode
             setTargetAspectRatio(screenAspectRatio)
             // Set initial target rotation, we will have to call this again if rotation changes
             // during the lifecycle of this use case
+            // 设置旋转方向
             setTargetRotation(viewFinder.display.rotation)
         }.build()
 
