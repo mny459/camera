@@ -35,6 +35,7 @@ import androidx.core.content.FileProvider
 import com.android.example.cameraxbasic.BuildConfig
 import com.android.example.cameraxbasic.utils.padWithDisplayCutout
 import androidx.appcompat.app.AlertDialog
+import androidx.navigation.Navigation
 import androidx.navigation.fragment.navArgs
 import com.android.example.cameraxbasic.utils.showImmersive
 import com.android.example.cameraxbasic.R
@@ -98,6 +99,12 @@ class GalleryFragment internal constructor() : Fragment() {
         view.findViewById<ImageButton>(R.id.back_button).setOnClickListener {
             fragmentManager?.popBackStack()
         }
+        // Handle back button press
+        view.findViewById<ImageButton>(R.id.btnDetail).setOnClickListener {
+//            fragmentManager?.popBackStack()
+            Navigation.findNavController(requireActivity(), R.id.fragment_container)
+                    .navigate(GalleryFragmentDirections.actionGalleryToInfo(mediaList[mediaViewPager.currentItem].path))
+        }
 
         // Handle share button press
         view.findViewById<ImageButton>(R.id.share_button).setOnClickListener {
@@ -148,7 +155,8 @@ class GalleryFragment internal constructor() : Fragment() {
                             if (mediaList.isEmpty()) {
                                 fragmentManager?.popBackStack()
                             }
-                        }}
+                        }
+                    }
 
                     .setNegativeButton(android.R.string.no, null)
                     .create().showImmersive()

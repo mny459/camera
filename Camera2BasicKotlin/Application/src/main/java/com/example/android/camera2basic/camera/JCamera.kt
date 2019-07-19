@@ -1,69 +1,36 @@
-/*
- * Copyright 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *       http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-package com.example.android.camera2basic
+package com.example.android.camera2basic.camera
 
 import android.Manifest
-import android.app.AlertDialog
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.graphics.ImageFormat
-import android.graphics.Matrix
-import android.graphics.Point
-import android.graphics.RectF
-import android.graphics.SurfaceTexture
-import android.hardware.camera2.CameraAccessException
-import android.hardware.camera2.CameraCaptureSession
-import android.hardware.camera2.CameraCharacteristics
-import android.hardware.camera2.CameraDevice
-import android.hardware.camera2.CameraManager
-import android.hardware.camera2.CameraMetadata
-import android.hardware.camera2.CaptureRequest
-import android.hardware.camera2.CaptureResult
-import android.hardware.camera2.TotalCaptureResult
+import android.graphics.*
+import android.hardware.camera2.*
 import android.media.ImageReader
-import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
-import android.support.v4.app.ActivityCompat
-import android.support.v4.app.Fragment
+import android.support.v4.app.SupportActivity
 import android.support.v4.content.ContextCompat
 import android.util.Log
 import android.util.Size
 import android.util.SparseIntArray
-import android.view.LayoutInflater
-import android.view.Surface
-import android.view.TextureView
-import android.view.View
-import android.view.ViewGroup
-import com.example.android.camera2basic.camera.*
-import com.example.android.camera2basic.camera.CompareSizesByArea
-import com.example.android.camera2basic.camera.ImageSaver
+import android.view.*
+import com.example.android.camera2basic.camera.delegate.CameraStateDelegate
+import com.example.android.camera2basic.camera.delegate.JCameraListener
+import com.example.android.camera2basic.camera.error.JCameraError
+import com.example.android.camera2basic.showToast
 import java.io.File
-import java.util.Arrays
-import java.util.Collections
+import java.util.*
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import kotlin.collections.ArrayList
 
-const val TAG = "Camera2"
-
-class Camera2BasicFragment : Fragment(), View.OnClickListener,
-        ActivityCompat.OnRequestPermissionsResultCallback {
+/**
+ * @Author CaiRj
+ * @Date 2019/7/19 9:51
+ * @Desc
+ */
+class JCamera {
 
     /**
      * [TextureView.SurfaceTextureListener] handles several lifecycle events on a
@@ -85,7 +52,7 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
         override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
 
     }
-
+    private var mErrorListener: JCameraListener? = null
     /**
      * ID of the current [CameraDevice].
      */
@@ -112,7 +79,7 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
      * The [android.util.Size] of camera preview.
      */
     private lateinit var previewSize: Size
-
+    private var mCameraStaDelegate: CameraStateDelegate? = null
     /**
      * [CameraDevice.StateCallback] is called when [CameraDevice] changes its state.
      * 相机状态改变时的回调方法
@@ -122,7 +89,7 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
         override fun onOpened(cameraDevice: CameraDevice) {
             cameraOpenCloseLock.release()
             // 获取相机 CameraDevice
-            this@Camera2BasicFragment.cameraDevice = cameraDevice
+            this@JCamera.cameraDevice = cameraDevice
             // 4. 开启预览
             createCameraPreviewSession()
         }
@@ -131,13 +98,14 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
             cameraOpenCloseLock.release()
             // 断开连接就释放资源
             cameraDevice.close()
-            this@Camera2BasicFragment.cameraDevice = null
+            this@JCamera.cameraDevice = null
+            mCameraStaDelegate?.onDisconnected()
         }
 
         override fun onError(cameraDevice: CameraDevice, error: Int) {
             // 发生错误就释放资源，并且退出程序
             onDisconnected(cameraDevice)
-            this@Camera2BasicFragment.activity?.finish()
+            mCameraStaDelegate?.onDisconnected(error)
         }
 
     }
@@ -168,6 +136,7 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
      * 可以实时获取 yuv 数据
      */
     private val onImageAvailableListener = ImageReader.OnImageAvailableListener {
+        // 处理图片事件
         backgroundHandler?.post(ImageSaver(it.acquireNextImage(), file))
     }
 
@@ -184,9 +153,7 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
     private lateinit var previewRequest: CaptureRequest
 
     /**
-     * The current state of camera state for taking pictures.
-     *
-     * @see .captureCallback
+     * 用于管理当前相机的状态
      */
     private var state = STATE_PREVIEW
 
@@ -203,6 +170,7 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
 
     /**
      * Orientation of the camera sensor
+     * 相机传感器的旋转方向
      */
     private var sensorOrientation = 0
 
@@ -215,8 +183,8 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
         private fun process(result: CaptureResult) {
             // CaptureResult 预览和拍照结果
             when (state) {
-                STATE_PREVIEW -> Unit // Do nothing when the camera preview is working normally.
-                STATE_WAITING_LOCK -> capturePicture(result)
+                STATE_PREVIEW -> Unit // 预览的时候啥也不做
+                STATE_WAITING_LOCK -> capturePicture(result) // 等待对焦
                 STATE_WAITING_PRECAPTURE -> {
                     // CONTROL_AE_STATE can be null on some devices
                     val aeState = result.get(CaptureResult.CONTROL_AE_STATE)
@@ -278,26 +246,14 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
         }
 
     }
-
-    override fun onCreateView(inflater: LayoutInflater,
-                              container: ViewGroup?,
-                              savedInstanceState: Bundle?
-    ): View? = inflater.inflate(R.layout.fragment_camera2_basic, container, false)
-
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        view.findViewById<View>(R.id.picture).setOnClickListener(this)
-        view.findViewById<View>(R.id.info).setOnClickListener(this)
-        textureView = view.findViewById(R.id.texture)
+    private var mContext: SupportActivity? = null
+    fun initCamera(context: SupportActivity, textureView: AutoFitTextureView, imagePath: String) {
+        this.mContext = context
+        this.textureView = textureView
+        file = File(imagePath)
     }
 
-    override fun onActivityCreated(savedInstanceState: Bundle?) {
-        super.onActivityCreated(savedInstanceState)
-        file = File(activity.getExternalFilesDir(null), PIC_FILE_NAME)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // 1. 开启一个后台线程
+    fun startPreview() {
         startBackgroundThread()
 
         // 2. 如果SurfaceTexture 可用，就打开摄像头
@@ -309,31 +265,9 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
         }
     }
 
-    override fun onPause() {
+    fun releaseCamera() {
         closeCamera()
         stopBackgroundThread()
-        super.onPause()
-    }
-
-    private fun requestCameraPermission() {
-        if (shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)) {
-            ConfirmationDialog().show(childFragmentManager, FRAGMENT_DIALOG)
-        } else {
-            requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA_PERMISSION)
-        }
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int,
-                                            permissions: Array<String>,
-                                            grantResults: IntArray) {
-        if (requestCode == REQUEST_CAMERA_PERMISSION) {
-            if (grantResults.size != 1 || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
-                ErrorDialog.newInstance(getString(R.string.request_permission))
-                        .show(childFragmentManager, FRAGMENT_DIALOG)
-            }
-        } else {
-            super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        }
     }
 
     /**
@@ -343,12 +277,12 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
      * @param height The height of available size for camera preview
      */
     private fun setUpCameraOutputs(width: Int, height: Int) {
+        if (mContext == null) return
         // JCamera 相机管理者
-        val manager = activity.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val manager = mContext!!.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         try {
             for (cameraId in manager.cameraIdList) {
-                println(cameraId)
-                // 获取相机特征
+                // 根据 cameraId 获取该相机的特征
                 val characteristics = manager.getCameraCharacteristics(cameraId)
 
                 // We don't use a front facing camera in this sample.
@@ -374,13 +308,13 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
 
                 // Find out if we need to swap dimension to get the preview size relative to sensor
                 // coordinate.
-                val displayRotation = activity.windowManager.defaultDisplay.rotation
+                val displayRotation = mContext!!.windowManager.defaultDisplay.rotation
 
                 sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION)
                 val swappedDimensions = areDimensionsSwapped(displayRotation)
 
                 val displaySize = Point()
-                activity.windowManager.defaultDisplay.getSize(displaySize)
+                mContext!!.windowManager.defaultDisplay.getSize(displaySize)
                 val rotatedPreviewWidth = if (swappedDimensions) height else width
                 val rotatedPreviewHeight = if (swappedDimensions) width else height
                 var maxPreviewWidth = if (swappedDimensions) displaySize.y else displaySize.x
@@ -398,15 +332,14 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
                         largest)
 
                 // We fit the aspect ratio of TextureView to the size of preview we picked.
-                if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                if (mContext!!.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
                     textureView.setAspectRatio(previewSize.width, previewSize.height)
                 } else {
                     textureView.setAspectRatio(previewSize.height, previewSize.width)
                 }
 
-                // Check if the flash is supported.
-                flashSupported =
-                        characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                // 检查是否支持闪光灯
+                flashSupported = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
 
                 this.cameraId = cameraId
 
@@ -419,8 +352,8 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
         } catch (e: NullPointerException) {
             // Currently an NPE is thrown when the Camera2API is used but not supported on the
             // device this code runs.
-            ErrorDialog.newInstance(getString(R.string.camera_error))
-                    .show(childFragmentManager, FRAGMENT_DIALOG)
+//            ErrorDialog.newInstance(mContext.getString(R.string.camera_error))
+//                    .show(mContext.fragmentManager.beginTransaction(), FRAGMENT_DIALOG)
         }
 
     }
@@ -457,16 +390,16 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
      */
     private fun openCamera(width: Int, height: Int) {
         // 检查权限
-        val permission = ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA)
+        val permission = ContextCompat.checkSelfPermission(mContext!!, Manifest.permission.CAMERA)
         if (permission != PackageManager.PERMISSION_GRANTED) {
-            requestCameraPermission()
+            Log.d(TAG, "请先检查权限")
             return
         }
         // 设置预览相关的参数
         setUpCameraOutputs(width, height)
         // Matrix 转换配置为 mTextureView
         configureTransform(width, height)
-        val manager = activity.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val manager = mContext!!.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         try {
             // Wait for camera to open - 2.5 seconds is sufficient
             if (!cameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
@@ -494,6 +427,7 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
             cameraDevice = null
             imageReader?.close()
             imageReader = null
+            mContext = null
         } catch (e: InterruptedException) {
             throw RuntimeException("Interrupted while trying to lock camera closing.", e)
         } finally {
@@ -552,7 +486,9 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
             // 创建预览会话。参数：预览输出，状态回调
             cameraDevice?.createCaptureSession(Arrays.asList(surface, imageReader?.surface),
                     object : CameraCaptureSession.StateCallback() {
-
+                        /**
+                         * 摄像头配置完成，可以处理 Capture
+                         */
                         override fun onConfigured(cameraCaptureSession: CameraCaptureSession) {
                             // The camera is already closed
                             if (cameraDevice == null) return
@@ -568,7 +504,7 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
                                 // 开启自动使用闪光灯
                                 setAutoFlash(previewRequestBuilder)
 
-                                // Finally, we start displaying the camera preview.
+                                // 创建一个 CaptureRequest
                                 previewRequest = previewRequestBuilder.build()
                                 // 4. 真正的开启预览
                                 captureSession?.setRepeatingRequest(previewRequest,
@@ -580,7 +516,8 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
                         }
 
                         override fun onConfigureFailed(session: CameraCaptureSession) {
-                            activity.showToast("Failed")
+//                            mContext!!.showToast("Failed")
+                            mErrorListener?.onError(JCameraError.FAILED_CONFIGURE)
                         }
                     }, null)
         } catch (e: CameraAccessException) {
@@ -598,8 +535,10 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
      * @param viewHeight The height of `textureView`
      */
     private fun configureTransform(viewWidth: Int, viewHeight: Int) {
-        activity ?: return
-        val rotation = activity.windowManager.defaultDisplay.rotation
+        if (mContext!!.isDestroyed) {
+            return
+        }
+        val rotation = mContext!!.windowManager.defaultDisplay.rotation
         val matrix = Matrix()
         val viewRect = RectF(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat())
         val bufferRect = RectF(0f, 0f, previewSize.height.toFloat(), previewSize.width.toFloat())
@@ -624,8 +563,9 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
 
     /**
      * Lock the focus as the first step for a still image capture.
+     * 拍照第一步，却是在对焦
      */
-    private fun lockFocus() {
+    fun lockFocus() {
         try {
             // This is how to tell the camera to lock focus.
             // 配置对焦方式
@@ -664,16 +604,17 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
     /**
      * Capture a still picture. This method should be called when we get a response in
      * [.captureCallback] from both [.lockFocus].
-     * 拍摄静止图片
+     * 拍摄静止图片。拍照和预览时分开的
      */
     private fun captureStillPicture() {
         try {
-            if (activity == null || cameraDevice == null) return
-            val rotation = activity.windowManager.defaultDisplay.rotation
+            if (mContext == null || cameraDevice == null) return
+            val rotation = mContext!!.windowManager.defaultDisplay.rotation
 
-            // This is the CaptureRequest.Builder that we use to take a picture.
+            // 用来构建拍照请求 CaptureRequest
             val captureBuilder = cameraDevice?.createCaptureRequest(
                     CameraDevice.TEMPLATE_STILL_CAPTURE)?.apply {
+                // 将拍照的结果处理交给 ImageReader
                 addTarget(imageReader?.surface)
 
                 // Sensor orientation is 90 for most devices, or 270 for some devices (eg. Nexus 5X)
@@ -681,28 +622,33 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
                 // For devices with orientation of 90, we return our mapping from ORIENTATIONS.
                 // For devices with orientation of 270, we need to rotate the JPEG 180 degrees.
                 // 旋转照片的方向
-                set(CaptureRequest.JPEG_ORIENTATION,
-                        (ORIENTATIONS.get(rotation) + sensorOrientation + 270) % 360)
+                set(CaptureRequest.JPEG_ORIENTATION, (ORIENTATIONS.get(rotation) + sensorOrientation + 270) % 360)
 
-                // Use the same AE and AF modes as the preview.
+                // 使用和预览时相同的对焦和闪光灯设置
                 set(CaptureRequest.CONTROL_AF_MODE,
                         CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
             }?.also { setAutoFlash(it) }
 
             val captureCallback = object : CameraCaptureSession.CaptureCallback() {
-
+                /**
+                 * 拍照完成
+                 */
                 override fun onCaptureCompleted(session: CameraCaptureSession,
                                                 request: CaptureRequest,
                                                 result: TotalCaptureResult) {
-                    activity.showToast("Saved: $file")
+                    mContext!!.showToast("Saved: $file")
                     Log.d(TAG, file.toString())
+                    // 拍照完成，释放对焦
                     unlockFocus()
                 }
             }
 
             captureSession?.apply {
+                // 取消之前重复捕获图片
                 stopRepeating()
+                // 尽快丢弃所有当前挂起和正在进行中的捕获。
                 abortCaptures()
+                // 发起拍照的 Capture
                 capture(captureBuilder?.build(), captureCallback, null)
             }
         } catch (e: CameraAccessException) {
@@ -714,6 +660,7 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
     /**
      * Unlock the focus. This method should be called when still image capture sequence is
      * finished.
+     * 拍照完成后释放对焦，恢复预览
      */
     private fun unlockFocus() {
         try {
@@ -733,20 +680,6 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
 
     }
 
-    override fun onClick(view: View) {
-        when (view.id) {
-            R.id.picture -> lockFocus()
-            R.id.info -> {
-                if (activity != null) {
-                    AlertDialog.Builder(activity)
-                            .setMessage(R.string.intro_message)
-                            .setPositiveButton(android.R.string.ok, null)
-                            .show()
-                }
-            }
-        }
-    }
-
     private fun setAutoFlash(requestBuilder: CaptureRequest.Builder) {
         if (flashSupported) {
             requestBuilder.set(CaptureRequest.CONTROL_AE_MODE,
@@ -760,7 +693,6 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
          * Conversion from screen rotation to JPEG orientation.
          */
         private val ORIENTATIONS = SparseIntArray()
-        private val FRAGMENT_DIALOG = "dialog"
 
         init {
             ORIENTATIONS.append(Surface.ROTATION_0, 90)
@@ -772,42 +704,42 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
         /**
          * Tag for the [Log].
          */
-        private val TAG = "Camera2BasicFragment"
+        private const val TAG = "Camera2BasicFragment"
 
         /**
          * Camera state: Showing camera preview.
          */
-        private val STATE_PREVIEW = 0
+        private const val STATE_PREVIEW = 0
 
         /**
          * Camera state: Waiting for the focus to be locked.
          */
-        private val STATE_WAITING_LOCK = 1
+        private const val STATE_WAITING_LOCK = 1
 
         /**
          * Camera state: Waiting for the exposure to be precapture state.
          */
-        private val STATE_WAITING_PRECAPTURE = 2
+        private const val STATE_WAITING_PRECAPTURE = 2
 
         /**
          * Camera state: Waiting for the exposure state to be something other than precapture.
          */
-        private val STATE_WAITING_NON_PRECAPTURE = 3
+        private const val STATE_WAITING_NON_PRECAPTURE = 3
 
         /**
          * Camera state: Picture was taken.
          */
-        private val STATE_PICTURE_TAKEN = 4
+        private const val STATE_PICTURE_TAKEN = 4
 
         /**
          * Max preview width that is guaranteed by Camera2 API
          */
-        private val MAX_PREVIEW_WIDTH = 1920
+        private const val MAX_PREVIEW_WIDTH = 1920
 
         /**
          * Max preview height that is guaranteed by Camera2 API
          */
-        private val MAX_PREVIEW_HEIGHT = 1080
+        private const val MAX_PREVIEW_HEIGHT = 1080
 
         /**
          * Given `choices` of `Size`s supported by a camera, choose the smallest one that
@@ -854,17 +786,16 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
 
             // Pick the smallest of those big enough. If there is no one big enough, pick the
             // largest of those not big enough.
-            if (bigEnough.size > 0) {
-                return Collections.min(bigEnough, CompareSizesByArea())
-            } else if (notBigEnough.size > 0) {
-                return Collections.max(notBigEnough, CompareSizesByArea())
-            } else {
-                Log.e(TAG, "Couldn't find any suitable preview size")
-                return choices[0]
+            return when {
+                bigEnough.size > 0 -> Collections.min(bigEnough, CompareSizesByArea())
+                notBigEnough.size > 0 -> Collections.max(notBigEnough, CompareSizesByArea())
+                else -> {
+                    Log.e(TAG, "Couldn't find any suitable preview size")
+                    choices[0]
+                }
             }
         }
 
-        @JvmStatic
-        fun newInstance(): Camera2BasicFragment = Camera2BasicFragment()
+        val instance: JCamera by lazy(mode = LazyThreadSafetyMode.SYNCHRONIZED) { JCamera() }
     }
 }

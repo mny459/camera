@@ -17,6 +17,7 @@
 package com.example.android.camera2basic
 
 import android.support.v4.app.FragmentActivity
+import android.support.v4.app.SupportActivity
 import android.support.v4.content.ContextCompat
 import android.widget.Toast
 
@@ -29,6 +30,6 @@ import android.widget.Toast
  *
  * @param text The message to show
  */
-fun FragmentActivity.showToast(text: String) {
+fun SupportActivity.showToast(text: String) {
     runOnUiThread { Toast.makeText(this, text, Toast.LENGTH_SHORT).show() }
 }
